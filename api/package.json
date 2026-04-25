@@ -1,0 +1,9 @@
+{
+  "name": "acacia-api",
+  "version": "1.0.0",
+  "dependencies": {
+    "google-auth-library": "^9.6.3",
+    "googleapis": "^140.0.1",
+    "node-fetch": "^3.3.2"
+  }
+}
