@@ -608,25 +608,23 @@ export default function AcaciaEstimator({ injectedAnthropicKey = "" }) {
 
   const grandRawPreview = (() => {
     const units = job.jobType === "multi" ? job.units : [{ rooms: job.rooms, qty: 1 }];
-    // For rooms with custom markup: use their post-markup roomRaw
-    // For rooms without: sum raw then apply global buffer
     let customTotal = 0, globalRaw = 0;
     units.forEach(u => {
       const qty = parseInt(u.qty) || 1;
       (u.rooms || []).forEach(r => {
         const c = calcRoom(r);
-        if (c.hasCustomMarkup) customTotal += c.roomRaw * qty;
-        else globalRaw += c.roomSubRaw * qty;
+        if (c.hasCustomMarkup) customTotal += (c.roomRaw || 0) * qty;
+        else globalRaw += (c.roomSubRaw || 0) * qty;
       });
     });
-    return { customTotal, globalRaw, combined: customTotal + globalRaw };
+    return { customTotal: customTotal || 0, globalRaw: globalRaw || 0, combined: (customTotal + globalRaw) || 0 };
   })();
 
   const cabBufPreview = grandRawPreview.customTotal + applyGrandBuffer(grandRawPreview.globalRaw);
   const demoPreview = job.includeDemo ? (parseFloat(job.demoPrice) || DEFAULT_DEMO_PRICE) : 0;
-  const installPctPreview = job.includeInstall ? (parseFloat(job.installPct) ?? DEFAULT_INSTALL_PCT) : 0;
+  const installPctPreview = job.includeInstall ? (parseFloat(job.installPct) || DEFAULT_INSTALL_PCT) : 0;
   const installPreview = job.includeInstall ? Math.ceil((cabBufPreview * installPctPreview / 100) / 50) * 50 : 0;
-  const grandTotalPreview = cabBufPreview + demoPreview + installPreview;
+  const grandTotalPreview = (isNaN(cabBufPreview) ? 0 : cabBufPreview) + demoPreview + (isNaN(installPreview) ? 0 : installPreview);
 
   // Get all rooms across the whole job that have photos
   const allRoomsWithPhotos = (() => {
