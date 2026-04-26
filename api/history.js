@@ -8,30 +8,30 @@ export const config = { maxDuration: 30 };
 
 const FOLDER_ID = '1FjOUqJRZvgo89u_stq_uuH4N1_cIxmYp';
 
-function getOAuthClient() {
-  const oauth2 = new google.auth.OAuth2(
-    process.env.GOOGLE_CLIENT_ID,
-    process.env.GOOGLE_CLIENT_SECRET,
-  );
-  oauth2.setCredentials({ refresh_token: process.env.GOOGLE_REFRESH_TOKEN });
-  return oauth2;
-}
-
 async function getDrive() {
-  return google.drive({ version: 'v3', auth: getOAuthClient() });
+  const credentials = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_JSON);
+  const auth = new google.auth.GoogleAuth({
+    credentials,
+    scopes: ['https://www.googleapis.com/auth/drive'],
+  });
+  return google.drive({ version: 'v3', auth });
 }
 
-async function getOrCreateFolder(drive, name, parentId = null) {
-  const q = `name='${name}' and mimeType='application/vnd.google-apps.folder' and trashed=false${parentId ? ` and '${parentId}' in parents` : ''}`;
+async function getOrCreateFolder(drive, name, parentId) {
+  const q = `name='${name}' and mimeType='application/vnd.google-apps.folder' and trashed=false and '${parentId}' in parents`;
   const res = await drive.files.list({
-    q, fields: 'files(id,name)',
-    includeItemsFromAllDrives: true,
+    q,
+    fields: 'files(id,name)',
     supportsAllDrives: true,
-    corpora: 'allDrives',
+    includeItemsFromAllDrives: true,
   });
   if (res.data.files.length > 0) return res.data.files[0].id;
   const created = await drive.files.create({
-    requestBody: { name, mimeType: 'application/vnd.google-apps.folder', ...(parentId ? { parents: [parentId] } : {}) },
+    requestBody: {
+      name,
+      mimeType: 'application/vnd.google-apps.folder',
+      parents: [parentId],
+    },
     supportsAllDrives: true,
     fields: 'id',
   });
@@ -45,63 +45,70 @@ export default async function handler(req, res) {
   if (req.method === 'OPTIONS') return res.status(200).end();
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
-  if (!process.env.GOOGLE_CLIENT_ID || !process.env.GOOGLE_CLIENT_SECRET || !process.env.GOOGLE_REFRESH_TOKEN) {
-    return res.status(500).json({ error: 'Google OAuth env vars not configured (GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_REFRESH_TOKEN)' });
-  }
+  const saJson = process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
+  if (!saJson) return res.status(500).json({ error: 'GOOGLE_SERVICE_ACCOUNT_JSON not configured' });
 
   try {
     const drive = await getDrive();
     const { action } = req.body;
 
-    const rootFolderId = FOLDER_ID;
-    const historyFolderId = await getOrCreateFolder(drive, 'History', rootFolderId);
+    const historyFolderId = await getOrCreateFolder(drive, 'History', FOLDER_ID);
 
-    // â”€â”€ List all estimates â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ── List all estimates ──────────────────────────────────────────────────
     if (action === 'list') {
       const files = await drive.files.list({
         q: `'${historyFolderId}' in parents and mimeType='application/json' and trashed=false`,
         fields: 'files(id,name,modifiedTime,createdTime)',
         orderBy: 'modifiedTime desc',
         pageSize: 50,
+        supportsAllDrives: true,
+        includeItemsFromAllDrives: true,
       });
       return res.status(200).json({ files: files.data.files || [] });
     }
 
-    // â”€â”€ Save/update estimate â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ── Save/update estimate ────────────────────────────────────────────────
     if (action === 'save') {
       const { estimateId, fileName, data } = req.body;
       const json = JSON.stringify(data);
       const stream = Readable.from(Buffer.from(json));
 
       if (estimateId) {
-        // Update existing file
         await drive.files.update({
           fileId: estimateId,
           media: { mimeType: 'application/json', body: stream },
+          supportsAllDrives: true,
         });
         return res.status(200).json({ success: true, fileId: estimateId });
       } else {
-        // Create new file
         const file = await drive.files.create({
           requestBody: { name: fileName, parents: [historyFolderId] },
           media: { mimeType: 'application/json', body: stream },
+          supportsAllDrives: true,
           fields: 'id,name',
         });
         return res.status(200).json({ success: true, fileId: file.data.id, fileName: file.data.name });
       }
     }
 
-    // â”€â”€ Load estimate â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ── Load estimate ───────────────────────────────────────────────────────
     if (action === 'load') {
       const { estimateId } = req.body;
-      const file = await drive.files.get({ fileId: estimateId, alt: 'media' });
+      const file = await drive.files.get({
+        fileId: estimateId,
+        alt: 'media',
+        supportsAllDrives: true,
+      });
       return res.status(200).json({ success: true, data: file.data });
     }
 
-    // â”€â”€ Delete estimate â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ── Delete estimate ─────────────────────────────────────────────────────
     if (action === 'delete') {
       const { estimateId } = req.body;
-      await drive.files.delete({ fileId: estimateId });
+      await drive.files.delete({
+        fileId: estimateId,
+        supportsAllDrives: true,
+      });
       return res.status(200).json({ success: true });
     }
 
