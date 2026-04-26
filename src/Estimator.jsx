@@ -113,9 +113,10 @@ function calcRoom(room) {
     cabinetSubtotal = rawClosetLI * closetMult * closetRate;
     pricePerLI = closetRate;
   } else {
-    // Always read doorStyle directly so price updates when style changes
+    // Normalize doorStyle — strip old " — $X/LI" suffix if present from legacy stored values
+    const cleanDoorStyle = (room.doorStyle || "").replace(/\s*—\s*\$[\d.]+\/LI.*$/, "").trim();
     const basePricePerLI = config.pricingMode === "tiered"
-      ? (CABINET_PRICING[room.doorStyle] || 12)
+      ? (CABINET_PRICING[cleanDoorStyle] || CABINET_PRICING[room.doorStyle] || 0)
       : (config.flatRate || 30);
     pricePerLI = basePricePerLI * (1 - boxDiscount);
     cabinetSubtotal = totalCabLI * pricePerLI;
@@ -268,10 +269,10 @@ function RoomForm({ room, onChange, index, onRemove }) {
         {cat === "cabinets" && (
           <div style={S.col}>
             <label style={S.label}>Door Style</label>
-            <select style={S.select} value={room.doorStyle || ""} onChange={e => onChange({ ...room, doorStyle: e.target.value })}>
-              <option value="">Select…</option>
-              {Object.keys(CABINET_PRICING).map(k => <option key={k}>{k} — ${CABINET_PRICING[k]}/LI</option>)}
-            </select>
+              <select style={S.select} value={room.doorStyle || ""} onChange={e => onChange({ ...room, doorStyle: e.target.value })}>
+                <option value="">Select…</option>
+                {Object.keys(CABINET_PRICING).map(k => <option key={k} value={k}>{k} — ${CABINET_PRICING[k]}/LI</option>)}
+              </select>
           </div>
         )}
         {(cat === "vanity" || cat === "wallUnit") && (
@@ -414,10 +415,10 @@ function RoomForm({ room, onChange, index, onRemove }) {
       <div style={{ marginTop: 12, display: "flex", gap: 12 }}>
         <div style={{ width: 140, flexShrink: 0 }}>
           <label style={S.label}>Markup Override (%)</label>
-          <input style={S.input} type="number" placeholder="15 (default)"
-            value={room.markupOverride !== undefined ? room.markupOverride : ""}
-            onChange={e => onChange({ ...room, markupOverride: e.target.value })} />
-          <div style={S.hint}>Overrides 15% global buffer for this room.</div>
+          <input style={S.input} type="number" placeholder="Blank = global 15%"
+            value={room.markupOverride !== undefined && room.markupOverride !== "" ? room.markupOverride : ""}
+            onChange={e => onChange({ ...room, markupOverride: e.target.value === "" ? "" : e.target.value })} />
+          <div style={S.hint}>Only set if different from 15%.</div>
         </div>
         <div style={{ flex: 1 }}>
           <label style={S.label}>Notes / Field Measure Flags</label>
@@ -436,18 +437,19 @@ function RoomForm({ room, onChange, index, onRemove }) {
       {/* Photo upload */}
       <PhotoUpload photos={photos} onChange={p => onChange({ ...room, photos: p })} />
 
-      {c.roomRaw > 0 && (
-        <div style={{ marginTop: 12, background: "#f7f3ea", borderRadius: 6, padding: "9px 14px", fontSize: 11, color: "#6a5040", display: "flex", gap: 14, flexWrap: "wrap", alignItems: "center" }}>
-          {!isCloset && <span>LI: <strong>{c.totalCabLI}"</strong></span>}
-          {isCloset && <span>Raw LI: <strong>{c.rawClosetLI}"</strong></span>}
-          <span>{config.label}: <strong>{fmt(c.cabinetSubtotal)}</strong></span>
-          {c.ctSF > 0 && <span>CT {c.ctSF}SF: <strong>{fmt(c.ctSubtotal)}</strong></span>}
-          {c.bsSF > 0 && <span>BS {c.bsSF}SF: <strong>{fmt(c.bsSubtotal)}</strong></span>}
-          {c.ledSubtotal > 0 && <span>LED: <strong>{fmt(c.ledSubtotal)}</strong></span>}
-          {c.hasCustomMarkup && <span style={{ background: "#e8f4e8", border: "1px solid #a8d4a8", borderRadius: 3, padding: "1px 6px", fontSize: 9, fontWeight: 700, color: "#2a7a4a" }}>Markup: {c.roomMarkupPct}%</span>}
-          <span style={{ marginLeft: "auto", fontWeight: 700, color: "#8a6020" }}>Room w/markup: {fmt(c.roomRaw)}</span>
-        </div>
-      )}
+      <div style={{ marginTop: 12, background: c.roomRaw > 0 ? "#f7f3ea" : "#faf8f4", borderRadius: 6, padding: "9px 14px", fontSize: 11, color: "#6a5040", display: "flex", gap: 14, flexWrap: "wrap", alignItems: "center", border: "1px solid #ede8dc" }}>
+        {!isCloset && <span>LI: <strong>{c.totalCabLI}"</strong></span>}
+        {isCloset && <span>Raw LI: <strong>{c.rawClosetLI}"</strong></span>}
+        {!isCloset && c.pricePerLI > 0 && <span style={{ fontSize: 10, color: "#9a8a6a" }}>@ ${c.pricePerLI.toFixed(2)}/LI{c.boxDiscount > 0 ? " (−10% melamine)" : ""}</span>}
+        <span>{config.label}: <strong>{c.cabinetSubtotal > 0 ? fmt(c.cabinetSubtotal) : "—"}</strong></span>
+        {c.ctSF > 0 && <span>CT {c.ctSF}SF: <strong>{fmt(c.ctSubtotal)}</strong></span>}
+        {c.bsSF > 0 && <span>BS {c.bsSF}SF: <strong>{fmt(c.bsSubtotal)}</strong></span>}
+        {c.ledSubtotal > 0 && <span>LED: <strong>{fmt(c.ledSubtotal)}</strong></span>}
+        {c.hasCustomMarkup && <span style={{ background: "#e8f4e8", border: "1px solid #a8d4a8", borderRadius: 3, padding: "1px 6px", fontSize: 9, fontWeight: 700, color: "#2a7a4a" }}>Markup: {c.roomMarkupPct}%</span>}
+        <span style={{ marginLeft: "auto", fontWeight: 700, color: c.roomRaw > 0 ? "#8a6020" : "#aaa" }}>
+          {c.roomRaw > 0 ? `Room raw: ${fmt(c.roomSubRaw)}` : "Enter walls to see total"}
+        </span>
+      </div>
     </div>
   );
 }
@@ -654,7 +656,7 @@ function RenderGallery({ renders }) {
 export default function AcaciaEstimator({ injectedAnthropicKey = "" }) {
   const [step, setStep] = useState(0);
   const [job, setJob] = useState({ jobType: "single", rooms: [{ walls: [] }], units: [{ name: "", qty: 1, rooms: [{ walls: [] }] }] });
-  const [openaiKey, setOpenaiKey] = useState("");
+  const [openaiKey, setOpenaiKey] = useState(import.meta.env.VITE_OPENAI_API_KEY || "");
   const anthropicKey = injectedAnthropicKey;
   const [loading, setLoading] = useState(false);
   const [clientOut, setClientOut] = useState("");
@@ -899,9 +901,12 @@ export default function AcaciaEstimator({ injectedAnthropicKey = "" }) {
 
             {/* OpenAI key */}
             <div style={{ marginTop: 4, paddingTop: 18, borderTop: "1px solid #f0ebe0" }}>
-              <label style={S.label}>OpenAI API Key <span style={{ color: "#b0a090", fontWeight: 400, textTransform: "none", letterSpacing: 0 }}>(optional — needed for AI renders)</span></label>
-              <input style={{ ...S.input, fontFamily: "monospace", letterSpacing: "0.04em" }} type="password" placeholder="sk-…" value={openaiKey} onChange={e => setOpenaiKey(e.target.value)} />
-              <div style={S.hint}>Key is used only for DALL-E image generation and is never stored or sent anywhere other than OpenAI.</div>
+              <label style={S.label}>OpenAI API Key <span style={{ color: "#b0a090", fontWeight: 400, textTransform: "none", letterSpacing: 0 }}>(for AI renders)</span></label>
+              {import.meta.env.VITE_OPENAI_API_KEY
+                ? <div style={{ ...S.input, background: "#f0faf4", color: "#2a7a4a", fontSize: 12 }}>✓ Auto-loaded from environment</div>
+                : <input style={{ ...S.input, fontFamily: "monospace", letterSpacing: "0.04em" }} type="password" placeholder="sk-…" value={openaiKey} onChange={e => setOpenaiKey(e.target.value)} />
+              }
+              <div style={S.hint}>Key is used only for DALL-E renders. Never stored or logged.</div>
             </div>
 
             <div style={{ marginTop: 20 }}><button style={S.btnGold} onClick={() => setStep(1)}>Next: Enter Rooms →</button></div>
