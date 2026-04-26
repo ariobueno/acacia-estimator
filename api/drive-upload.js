@@ -25,7 +25,7 @@ export default async function handler(req, res) {
     });
     const drive = google.drive({ version: 'v3', auth });
 
-    // Hardcoded folder ID — "Acacia Estimates" folder shared with service account
+    // Hardcoded folder ID â€” "Acacia Estimates" folder shared with service account
     const folderId = process.env.GOOGLE_DRIVE_FOLDER_ID || '1FjOUqJRZvgo89u_stq_uuH4N1_cIxmYp';
 
     // Upload PDF
