@@ -796,12 +796,12 @@ export default function AcaciaEstimator({ injectedAnthropicKey = "" }) {
     setClientOut(polishedClient);
     setLoading(false);
 
-    // Auto-save to Google Drive history
+    // Auto-save to history
     try {
       setSaveStatus({ type: "saving", msg: "Saving to history…" });
       const safeName = (updatedJob.clientName || "Estimate").replace(/[^a-zA-Z0-9\s]/g, '').replace(/\s+/g, '_');
       const dateStr = new Date().toISOString().slice(0, 10);
-      const fileName = `Acacia_${safeName}_${dateStr}_Rev${newRevision}.json`;
+      const fileName = `Acacia_${safeName}_${dateStr}_Rev${newRevision}`;
       // Strip photos from saved data (too large) but keep metadata
       const saveData = {
         ...updatedJob,
@@ -813,12 +813,12 @@ export default function AcaciaEstimator({ injectedAnthropicKey = "" }) {
       };
       const res = await fetch("/api/history", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "save", fileName, data: saveData }),
+        body: JSON.stringify({ action: "save", estimateId: activeEstimateId || null, fileName, data: saveData }),
       });
       const data = await res.json();
-      if (data.fileId) { setActiveEstimateId(data.fileId); setSaveStatus({ type: "saved", msg: `Rev ${newRevision} saved to Drive` }); }
-      else setSaveStatus({ type: "error", msg: "Drive save failed" });
-    } catch (e) { setSaveStatus({ type: "error", msg: "Drive save failed: " + e.message }); }
+      if (data.fileId) { setActiveEstimateId(data.fileId); setSaveStatus({ type: "saved", msg: `Rev ${newRevision} saved` }); }
+      else setSaveStatus({ type: "error", msg: "Save failed" });
+    } catch (e) { setSaveStatus({ type: "error", msg: "Save failed: " + e.message }); }
 
     // Generate renders for rooms with photos (if OpenAI key provided)
     if (openaiKey && allRoomsWithPhotos.length > 0) {
