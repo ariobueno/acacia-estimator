@@ -6,10 +6,19 @@ import { Readable } from 'stream';
 
 export const config = { maxDuration: 30 };
 
+const FOLDER_ID = '1FjOUqJRZvgo89u_stq_uuH4N1_cIxmYp';
+
+function getOAuthClient() {
+  const oauth2 = new google.auth.OAuth2(
+    process.env.GOOGLE_CLIENT_ID,
+    process.env.GOOGLE_CLIENT_SECRET,
+  );
+  oauth2.setCredentials({ refresh_token: process.env.GOOGLE_REFRESH_TOKEN });
+  return oauth2;
+}
+
 async function getDrive() {
-  const credentials = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_JSON);
-  const auth = new google.auth.GoogleAuth({ credentials, scopes: ['https://www.googleapis.com/auth/drive'] });
-  return google.drive({ version: 'v3', auth });
+  return google.drive({ version: 'v3', auth: getOAuthClient() });
 }
 
 async function getOrCreateFolder(drive, name, parentId = null) {
@@ -36,15 +45,15 @@ export default async function handler(req, res) {
   if (req.method === 'OPTIONS') return res.status(200).end();
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
-  const saJson = process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
-  if (!saJson) return res.status(500).json({ error: 'GOOGLE_SERVICE_ACCOUNT_JSON not configured' });
+  if (!process.env.GOOGLE_CLIENT_ID || !process.env.GOOGLE_CLIENT_SECRET || !process.env.GOOGLE_REFRESH_TOKEN) {
+    return res.status(500).json({ error: 'Google OAuth env vars not configured (GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_REFRESH_TOKEN)' });
+  }
 
   try {
     const drive = await getDrive();
     const { action } = req.body;
 
-    // Hardcoded "Acacia Estimates" folder ID shared with service account
-    const rootFolderId = process.env.GOOGLE_DRIVE_FOLDER_ID || '1FjOUqJRZvgo89u_stq_uuH4N1_cIxmYp';
+    const rootFolderId = FOLDER_ID;
     const historyFolderId = await getOrCreateFolder(drive, 'History', rootFolderId);
 
     // â”€â”€ List all estimates â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -54,8 +63,6 @@ export default async function handler(req, res) {
         fields: 'files(id,name,modifiedTime,createdTime)',
         orderBy: 'modifiedTime desc',
         pageSize: 50,
-        supportsAllDrives: true,
-        includeItemsFromAllDrives: true,
       });
       return res.status(200).json({ files: files.data.files || [] });
     }
@@ -71,7 +78,6 @@ export default async function handler(req, res) {
         await drive.files.update({
           fileId: estimateId,
           media: { mimeType: 'application/json', body: stream },
-          supportsAllDrives: true,
         });
         return res.status(200).json({ success: true, fileId: estimateId });
       } else {
@@ -79,7 +85,6 @@ export default async function handler(req, res) {
         const file = await drive.files.create({
           requestBody: { name: fileName, parents: [historyFolderId] },
           media: { mimeType: 'application/json', body: stream },
-          supportsAllDrives: true,
           fields: 'id,name',
         });
         return res.status(200).json({ success: true, fileId: file.data.id, fileName: file.data.name });
@@ -89,14 +94,14 @@ export default async function handler(req, res) {
     // â”€â”€ Load estimate â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     if (action === 'load') {
       const { estimateId } = req.body;
-      const file = await drive.files.get({ fileId: estimateId, alt: 'media', supportsAllDrives: true });
+      const file = await drive.files.get({ fileId: estimateId, alt: 'media' });
       return res.status(200).json({ success: true, data: file.data });
     }
 
     // â”€â”€ Delete estimate â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     if (action === 'delete') {
       const { estimateId } = req.body;
-      await drive.files.delete({ fileId: estimateId, supportsAllDrives: true });
+      await drive.files.delete({ fileId: estimateId });
       return res.status(200).json({ success: true });
     }
 
