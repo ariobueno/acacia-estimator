@@ -18,7 +18,7 @@ const S = {
 
 export default function IntegrationsPanel({ job, clientOut, internalOut, renders, proposalTotal }) {
   const [pdfState, setPdfState]     = useState({ loading: false, done: false, error: null, base64: null, fileName: null });
-  const [driveState, setDriveState] = useState({ loading: false, done: false, error: null, link: null });
+  const [emailState, setEmailState] = useState({ loading: false, done: false, error: null });
   const [kommoState, setKommoState] = useState({ loading: false, done: false, error: null, found: null, leadId: null });
   const [phone, setPhone]           = useState('');
   const [kommoStep, setKommoStep]   = useState('idle'); // idle | searched | confirm
@@ -43,21 +43,27 @@ export default function IntegrationsPanel({ job, clientOut, internalOut, renders
     link.click();
   };
 
-  // ── 2. Upload to Google Drive ─────────────────────────────────────────────
-  const handleDriveUpload = async () => {
+  // ── 2. Email PDF ──────────────────────────────────────────────────────────
+  const handleEmailPdf = async () => {
     if (!pdfState.base64) return;
-    setDriveState({ loading: true, done: false, error: null, link: null });
+    setEmailState({ loading: true, done: false, error: null });
     try {
-      const res = await fetch('/api/drive-upload', {
+      const res = await fetch('/api/email-pdf', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ fileName: pdfState.fileName, pdfBase64: pdfState.base64 }),
+        body: JSON.stringify({
+          fileName: pdfState.fileName,
+          pdfBase64: pdfState.base64,
+          clientName: job.clientName,
+          address: job.address,
+          proposalTotal,
+        }),
       });
       const data = await res.json();
-      if (!res.ok || data.error) throw new Error(data.error || 'Upload failed');
-      setDriveState({ loading: false, done: true, error: null, link: data.webViewLink });
+      if (!res.ok || data.error) throw new Error(data.error || 'Email failed');
+      setEmailState({ loading: false, done: true, error: null });
     } catch (e) {
-      setDriveState({ loading: false, done: false, error: e.message, link: null });
+      setEmailState({ loading: false, done: false, error: e.message });
     }
   };
 
@@ -84,7 +90,7 @@ export default function IntegrationsPanel({ job, clientOut, internalOut, renders
   // ── 4. Kommo — attach to existing or create new ───────────────────────────
   const handleKommoPush = async (mode) => {
     setKommoState(s => ({ ...s, loading: true, error: null }));
-    const driveLink = driveState.link || '';
+    const driveLink = '';
     const payload = {
       phone,
       clientName: job.clientName,
@@ -121,7 +127,6 @@ export default function IntegrationsPanel({ job, clientOut, internalOut, renders
   };
 
   const pdfReady = pdfState.done && pdfState.base64;
-  const driveReady = driveState.done && driveState.link;
 
   return (
     <div style={S.panel}>
@@ -143,25 +148,19 @@ export default function IntegrationsPanel({ job, clientOut, internalOut, renders
           {pdfReady && <div style={S.status('success')}>✓ PDF ready — {pdfState.fileName}</div>}
         </div>
 
-        {/* ── Google Drive ── */}
-        <div style={S.card(driveReady)}>
-          <div style={S.cardTitle}>☁ Google Drive</div>
-          <div style={S.cardSub}>Auto-saves to "Acacia Estimates" folder. Generate PDF first.</div>
-          {!driveReady ? (
-            <button
-              style={!pdfReady || driveState.loading ? S.btnDisabled : S.btn('#c8a84b')}
-              onClick={handleDriveUpload}
-              disabled={!pdfReady || driveState.loading}
-            >
-              {driveState.loading ? 'Uploading…' : 'Save to Drive'}
-            </button>
-          ) : (
-            <a href={driveState.link} target="_blank" rel="noreferrer" style={{ textDecoration: 'none' }}>
-              <button style={S.btn('#c8a84b')}>Open in Drive ↗</button>
-            </a>
-          )}
-          {driveState.error && <div style={S.status('error')}>{driveState.error}</div>}
-          {driveReady && <div style={S.status('success')}>✓ Saved to Acacia Estimates folder</div>}
+        {/* ── Email PDF ── */}
+        <div style={S.card(emailState.done)}>
+          <div style={S.cardTitle}>📧 Email PDF</div>
+          <div style={S.cardSub}>Sends PDF to andres@acaciacabinets.net. Generate PDF first.</div>
+          <button
+            style={!pdfReady || emailState.loading || emailState.done ? S.btnDisabled : S.btn('#c8a84b')}
+            onClick={handleEmailPdf}
+            disabled={!pdfReady || emailState.loading || emailState.done}
+          >
+            {emailState.loading ? 'Sending…' : emailState.done ? '✓ Sent' : 'Send to Email'}
+          </button>
+          {emailState.error && <div style={S.status('error')}>{emailState.error}</div>}
+          {emailState.done && <div style={S.status('success')}>✓ PDF sent to andres@acaciacabinets.net</div>}
         </div>
 
         {/* ── Kommo ── */}
@@ -220,7 +219,6 @@ export default function IntegrationsPanel({ job, clientOut, internalOut, renders
           {kommoStep === 'done' && (
             <div style={S.status('success')}>
               ✓ {kommoState.leadId ? `New lead created (#${kommoState.leadId})` : 'Estimate attached to existing lead'}
-              {driveReady && ' · Drive link added as note'}
             </div>
           )}
 
