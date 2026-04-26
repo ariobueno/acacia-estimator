@@ -1,14 +1,10 @@
 // api/drive-upload.js
-// Vercel serverless function — proxies PDF upload to Google Drive
-// Uses a service account key stored in GOOGLE_SERVICE_ACCOUNT_JSON env var
-
 import { google } from 'googleapis';
 import { Readable } from 'stream';
 
 export const config = { maxDuration: 30 };
 
 export default async function handler(req, res) {
-  // CORS
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
@@ -19,47 +15,38 @@ export default async function handler(req, res) {
     const { fileName, pdfBase64, mimeType = 'application/pdf' } = req.body;
     if (!fileName || !pdfBase64) return res.status(400).json({ error: 'Missing fileName or pdfBase64' });
 
-    // Parse service account credentials
     const saJson = process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
     if (!saJson) return res.status(500).json({ error: 'GOOGLE_SERVICE_ACCOUNT_JSON not configured' });
     const credentials = JSON.parse(saJson);
 
-    // Authenticate
     const auth = new google.auth.GoogleAuth({
       credentials,
       scopes: ['https://www.googleapis.com/auth/drive'],
     });
     const drive = google.drive({ version: 'v3', auth });
 
-    // Find or create "Acacia Estimates" folder
-    const folderName = process.env.GOOGLE_DRIVE_FOLDER || 'Acacia Estimates';
-    let folderId = process.env.GOOGLE_DRIVE_FOLDER_ID || null;
-
-    if (!folderId) {
-      const folderSearch = await drive.files.list({
-        q: `name='${folderName}' and mimeType='application/vnd.google-apps.folder' and trashed=false`,
-        fields: 'files(id,name)',
-      });
-      if (folderSearch.data.files.length > 0) {
-        folderId = folderSearch.data.files[0].id;
-      } else {
-        const folderCreate = await drive.files.create({
-          resource: { name: folderName, mimeType: 'application/vnd.google-apps.folder' },
-          fields: 'id',
-        });
-        folderId = folderCreate.data.id;
-      }
-    }
+    // Hardcoded folder ID — "Acacia Estimates" folder shared with service account
+    const folderId = process.env.GOOGLE_DRIVE_FOLDER_ID || '1FjOUqJRZvgo89u_stq_uuH4N1_cIxmYp';
 
     // Upload PDF
     const buffer = Buffer.from(pdfBase64, 'base64');
     const stream = Readable.from(buffer);
 
     const file = await drive.files.create({
-      resource: { name: fileName, parents: [folderId] },
+      requestBody: { name: fileName, parents: [folderId] },
       media: { mimeType, body: stream },
+      supportsAllDrives: true,
       fields: 'id,webViewLink,name',
     });
+
+    // Make file readable by anyone with the link
+    try {
+      await drive.permissions.create({
+        fileId: file.data.id,
+        supportsAllDrives: true,
+        requestBody: { role: 'reader', type: 'anyone' },
+      });
+    } catch (e) { /* non-fatal */ }
 
     return res.status(200).json({
       success: true,

@@ -14,10 +14,16 @@ async function getDrive() {
 
 async function getOrCreateFolder(drive, name, parentId = null) {
   const q = `name='${name}' and mimeType='application/vnd.google-apps.folder' and trashed=false${parentId ? ` and '${parentId}' in parents` : ''}`;
-  const res = await drive.files.list({ q, fields: 'files(id,name)' });
+  const res = await drive.files.list({
+    q, fields: 'files(id,name)',
+    includeItemsFromAllDrives: true,
+    supportsAllDrives: true,
+    corpora: 'allDrives',
+  });
   if (res.data.files.length > 0) return res.data.files[0].id;
   const created = await drive.files.create({
-    resource: { name, mimeType: 'application/vnd.google-apps.folder', ...(parentId ? { parents: [parentId] } : {}) },
+    requestBody: { name, mimeType: 'application/vnd.google-apps.folder', ...(parentId ? { parents: [parentId] } : {}) },
+    supportsAllDrives: true,
     fields: 'id',
   });
   return created.data.id;
@@ -37,8 +43,8 @@ export default async function handler(req, res) {
     const drive = await getDrive();
     const { action } = req.body;
 
-    // Get/create folder structure: Acacia Estimates → History
-    const rootFolderId = await getOrCreateFolder(drive, process.env.GOOGLE_DRIVE_FOLDER || 'Acacia Estimates');
+    // Hardcoded "Acacia Estimates" folder ID shared with service account
+    const rootFolderId = process.env.GOOGLE_DRIVE_FOLDER_ID || '1FjOUqJRZvgo89u_stq_uuH4N1_cIxmYp';
     const historyFolderId = await getOrCreateFolder(drive, 'History', rootFolderId);
 
     // ── List all estimates ──────────────────────────────────────────────────
