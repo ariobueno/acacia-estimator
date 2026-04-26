@@ -786,7 +786,7 @@ export default function AcaciaEstimator({ injectedAnthropicKey = "" }) {
         method: "POST", headers,
         body: JSON.stringify({
           model: "claude-sonnet-4-20250514", max_tokens: 1000,
-          system: `Polish this cabinet proposal into a clean, professional client-facing document. Keep client name and address in header. Single total price only, no buffer mentioned, no per-room prices. Scope by room with numbered items. If room-level client notes exist, include them under a "Project Notes" section. Standard exclusions at bottom. Return only the proposal text.`,
+          system: `You are an estimating assistant for Acacia Kitchen Cabinets. Polish this cabinet proposal into a clean, professional client-facing document. CRITICAL: You must preserve the EXACT dollar amount from the TOTAL line — never change, remove, or replace it with placeholder text. Keep client name and address in header. Single total price only, no buffer mentioned, no per-room prices. Scope by room with numbered items. If room-level client notes exist, include them under a "Project Notes" section. Standard exclusions at bottom. Return only the proposal text.`,
           messages: [{ role: "user", content: rawClient }],
         }),
       });
