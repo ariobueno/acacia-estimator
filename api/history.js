@@ -54,6 +54,8 @@ export default async function handler(req, res) {
         fields: 'files(id,name,modifiedTime,createdTime)',
         orderBy: 'modifiedTime desc',
         pageSize: 50,
+        supportsAllDrives: true,
+        includeItemsFromAllDrives: true,
       });
       return res.status(200).json({ files: files.data.files || [] });
     }
@@ -69,13 +71,15 @@ export default async function handler(req, res) {
         await drive.files.update({
           fileId: estimateId,
           media: { mimeType: 'application/json', body: stream },
+          supportsAllDrives: true,
         });
         return res.status(200).json({ success: true, fileId: estimateId });
       } else {
         // Create new file
         const file = await drive.files.create({
-          resource: { name: fileName, parents: [historyFolderId] },
+          requestBody: { name: fileName, parents: [historyFolderId] },
           media: { mimeType: 'application/json', body: stream },
+          supportsAllDrives: true,
           fields: 'id,name',
         });
         return res.status(200).json({ success: true, fileId: file.data.id, fileName: file.data.name });
@@ -85,14 +89,14 @@ export default async function handler(req, res) {
     // â”€â”€ Load estimate â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     if (action === 'load') {
       const { estimateId } = req.body;
-      const file = await drive.files.get({ fileId: estimateId, alt: 'media' });
+      const file = await drive.files.get({ fileId: estimateId, alt: 'media', supportsAllDrives: true });
       return res.status(200).json({ success: true, data: file.data });
     }
 
     // â”€â”€ Delete estimate â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     if (action === 'delete') {
       const { estimateId } = req.body;
-      await drive.files.delete({ fileId: estimateId });
+      await drive.files.delete({ fileId: estimateId, supportsAllDrives: true });
       return res.status(200).json({ success: true });
     }
 
