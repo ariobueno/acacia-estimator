@@ -12,6 +12,15 @@ const CABINET_PRICING = {
   "Maple Wood Shaker": 45,
 };
 
+// Box material affects pricing: plywood = standard rate, melamine = -10%
+const BOX_MATERIALS = [
+  { label: "Plywood (standard)", value: "plywood", discount: 0 },
+  { label: "Melamine (-10%)", value: "melamine", discount: 0.10 },
+];
+
+// Door/drawer finish options (separate from box material)
+const DOOR_FINISHES = ["Painted", "Stained", "Veneer", "Thermofoil", "Laminate", "Natural Wood", "Other"];
+
 const CLOSET_MATERIALS = [
   { label: "White Melamine (standard)", value: "white_melamine", rate: 14 },
   { label: "MDF", value: "mdf", rate: 18 },
@@ -21,10 +30,9 @@ const CLOSET_MATERIALS = [
   { label: "Wood – Veneer", value: "wood_veneer", rate: 18 },
 ];
 
-const CAB_MATERIALS = ["MDF", "Melamine", "Wood – Painted", "Wood – Stained", "Wood – Veneer", "White Melamine"];
 const BUFFER = 0.15;
 const DEFAULT_CT_PRICE = 25;
-const LED_PRICE_PER_10FT = 850;
+const DEFAULT_LED_PRICE = 750;  // per run, user specifies number of runs
 const DEFAULT_DEMO_PRICE = 650;
 const DEFAULT_INSTALL_PCT = 10;
 
@@ -90,13 +98,29 @@ function calcRoom(room) {
   const islandCabLI = islandRaw ? (room.islandSides === "both" ? islandRaw * 2 : islandRaw) : 0;
   const islandCTLI = (islandRaw && room.islandHasCT) ? islandRaw : 0;
   const totalCabLI = wallCabLI + islandCabLI;
+
+  // Box material discount
+  const boxMat = BOX_MATERIALS.find(m => m.value === (room.boxMaterial || "plywood")) || BOX_MATERIALS[0];
+  const boxDiscount = boxMat.discount || 0;
+
   const closetMat = CLOSET_MATERIALS.find(m => m.value === (room.closetMaterial || "white_melamine")) || CLOSET_MATERIALS[0];
   const closetRate = closetMat.rate;
   const closetMult = room.closetHasDoors ? 3 : 2;
   const rawClosetLI = (room.walls || []).reduce((s, w) => s + (parseFloat(w.inches) || 0), 0);
+
   let cabinetSubtotal = 0, pricePerLI = 0;
-  if (cat === "closet") { cabinetSubtotal = rawClosetLI * closetMult * closetRate; pricePerLI = closetRate; }
-  else { pricePerLI = config.pricingMode === "tiered" ? (CABINET_PRICING[room.doorStyle] || 12) : (config.flatRate || 30); cabinetSubtotal = totalCabLI * pricePerLI; }
+  if (cat === "closet") {
+    cabinetSubtotal = rawClosetLI * closetMult * closetRate;
+    pricePerLI = closetRate;
+  } else {
+    // Always read doorStyle directly so price updates when style changes
+    const basePricePerLI = config.pricingMode === "tiered"
+      ? (CABINET_PRICING[room.doorStyle] || 12)
+      : (config.flatRate || 30);
+    pricePerLI = basePricePerLI * (1 - boxDiscount);
+    cabinetSubtotal = totalCabLI * pricePerLI;
+  }
+
   const ctDepth = parseFloat(room.ctDepthOverride) || config.defaultDepth || 25;
   const ctPricePerSF = parseFloat(room.ctPrice) || DEFAULT_CT_PRICE;
   const ctLI = ctWallLI + islandCTLI;
@@ -105,14 +129,27 @@ function calcRoom(room) {
   const bsHeight = !room.bsOption || room.bsOption === "none" ? 0 : room.bsOption === "4in" ? 4 : room.bsOption === "18in" ? 18 : parseFloat(room.bsCustom) || 0;
   const bsSF = toSF(ctLI, bsHeight);
   const bsSubtotal = bsSF * ctPricePerSF;
-  const ledRuns = (!room.hasLED || cat === "closet") ? 0 : Math.ceil(wallCabLI / 10);
-  const ledSubtotal = ledRuns * LED_PRICE_PER_10FT;
-  // Per-room markup override (replaces global 15% buffer for this room if set)
+
+  // LED: user enters number of runs, $750/run (overridable)
+  const ledRuns = (!room.hasLED || cat === "closet") ? 0 : (parseInt(room.ledRuns) || 0);
+  const ledPricePerRun = parseFloat(room.ledPrice) || DEFAULT_LED_PRICE;
+  const ledSubtotal = ledRuns * ledPricePerRun;
+
+  // Per-room markup override
   const roomMarkupPct = room.markupOverride !== undefined && room.markupOverride !== "" ? parseFloat(room.markupOverride) : null;
   const roomSubRaw = cabinetSubtotal + ctSubtotal + bsSubtotal + ledSubtotal;
   const roomRaw = roomMarkupPct !== null ? roomSubRaw * (1 + roomMarkupPct / 100) : roomSubRaw;
   const hasCustomMarkup = roomMarkupPct !== null;
-  return { cat, config, totalCabLI, wallCabLI, islandCabLI, rawClosetLI, cabinetSubtotal, ctSF, ctSubtotal, bsSF, bsSubtotal, ledRuns, ledSubtotal, roomRaw, roomSubRaw, hasCustomMarkup, roomMarkupPct, ctDepth, ctPricePerSF, bsHeight, pricePerLI, closetRate, closetMult, closetMatLabel: closetMat.label };
+
+  return {
+    cat, config, totalCabLI, wallCabLI, islandCabLI, rawClosetLI,
+    cabinetSubtotal, ctSF, ctSubtotal, bsSF, bsSubtotal,
+    ledRuns, ledSubtotal, ledPricePerRun, roomRaw, roomSubRaw,
+    hasCustomMarkup, roomMarkupPct,
+    ctDepth, ctPricePerSF, bsHeight,
+    pricePerLI, boxDiscount, boxMat,
+    closetRate, closetMult, closetMatLabel: closetMat.label,
+  };
 }
 
 function totalRooms(rooms) {
@@ -254,17 +291,29 @@ function RoomForm({ room, onChange, index, onRemove }) {
       </div>
 
       {!isCloset && (
-        <div style={S.row}>
-          <div style={S.col}>
-            <label style={S.label}>Box Material</label>
-            <select style={S.select} value={room.material || ""} onChange={e => onChange({ ...room, material: e.target.value })}>
-              <option value="">Select…</option>
-              {CAB_MATERIALS.map(m => <option key={m}>{m}</option>)}
-            </select>
+        <div>
+          <div style={S.row}>
+            <div style={S.col}>
+              <label style={S.label}>Box Material</label>
+              <select style={S.select} value={room.boxMaterial || "plywood"} onChange={e => onChange({ ...room, boxMaterial: e.target.value })}>
+                {BOX_MATERIALS.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
+              </select>
+              {room.boxMaterial === "melamine" && <div style={S.hint}>Melamine box applies a 10% discount to the door style rate.</div>}
+            </div>
+            <div style={S.col}>
+              <label style={S.label}>Door & Drawer Finish</label>
+              <select style={S.select} value={room.doorFinish || ""} onChange={e => onChange({ ...room, doorFinish: e.target.value })}>
+                <option value="">Select…</option>
+                {DOOR_FINISHES.map(f => <option key={f}>{f}</option>)}
+              </select>
+            </div>
           </div>
-          <div style={S.col}>
-            <label style={S.label}>Hardware</label>
-            <input style={S.input} placeholder="e.g. Gola rail, brushed nickel, none" value={room.hardware || ""} onChange={e => onChange({ ...room, hardware: e.target.value })} />
+          <div style={S.row}>
+            <div style={S.col}>
+              <label style={S.label}>Hardware</label>
+              <input style={S.input} placeholder="e.g. Gola rail, brushed nickel, none" value={room.hardware || ""} onChange={e => onChange({ ...room, hardware: e.target.value })} />
+            </div>
+            <div style={S.col} />
           </div>
         </div>
       )}
@@ -335,12 +384,30 @@ function RoomForm({ room, onChange, index, onRemove }) {
       )}
 
       {!isCloset && (
-        <div style={{ marginTop: 12, paddingTop: 12, borderTop: "1px solid #f0ebe0", display: "flex", alignItems: "center", gap: 12 }}>
-          <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "#6a5a40", cursor: "pointer" }}>
+        <div style={{ marginTop: 12, paddingTop: 12, borderTop: "1px solid #f0ebe0" }}>
+          <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "#6a5a40", cursor: "pointer", marginBottom: 8 }}>
             <input type="checkbox" checked={room.hasLED || false} onChange={e => onChange({ ...room, hasLED: e.target.checked })} />
             LED Lighting Upgrade
           </label>
-          {room.hasLED && c.wallCabLI > 0 && <span style={{ fontSize: 11, color: "#8a6a20" }}>{c.ledRuns} runs × $850 = {fmt(c.ledSubtotal)}</span>}
+          {room.hasLED && (
+            <div style={{ display: "flex", gap: 10, alignItems: "flex-end", flexWrap: "wrap" }}>
+              <div>
+                <label style={S.label}>Number of Runs</label>
+                <input style={{ ...S.input, width: 90 }} type="number" min="1" placeholder="1"
+                  value={room.ledRuns || ""} onChange={e => onChange({ ...room, ledRuns: e.target.value })} />
+              </div>
+              <div>
+                <label style={S.label}>Price / Run ($)</label>
+                <input style={{ ...S.input, width: 100 }} type="number" placeholder={`${DEFAULT_LED_PRICE}`}
+                  value={room.ledPrice || ""} onChange={e => onChange({ ...room, ledPrice: e.target.value })} />
+              </div>
+              {c.ledRuns > 0 && (
+                <span style={{ fontSize: 11, color: "#8a6a20", paddingBottom: 9 }}>
+                  {c.ledRuns} × ${c.ledPricePerRun} = {fmt(c.ledSubtotal)}
+                </span>
+              )}
+            </div>
+          )}
         </div>
       )}
 
@@ -501,14 +568,14 @@ function buildInternalText(job) {
         lines.push(`    → ${c.rawClosetLI}" × ${c.closetMult} × $${c.closetRate} = ${fmt(c.cabinetSubtotal)}  (×${qty} = ${fmt(c.cabinetSubtotal * qty)})`);
       } else {
         const typeMap = { both: "U+L ×2", doubleTop: "DblTop ×3", uppers: "Uppers ×1", lowers: "Lowers ×1" };
-        if (r.doorStyle) lines.push(`    Style: ${r.doorStyle} @ $${c.pricePerLI}/LI`);
-        if (r.material) lines.push(`    Material: ${r.material}  Hardware: ${r.hardware || "—"}`);
+        if (r.doorStyle) lines.push(`    Style: ${r.doorStyle} @ $${c.pricePerLI.toFixed(2)}/LI${c.boxDiscount > 0 ? ` (${(c.boxDiscount*100).toFixed(0)}% melamine discount applied)` : ""}`);
+        if (r.boxMaterial) lines.push(`    Box: ${c.boxMat.label}  Finish: ${r.doorFinish || "—"}  Hardware: ${r.hardware || "—"}`);
         (r.walls || []).forEach(w => lines.push(`      "${w.label || "Wall"}": ${w.inches || 0}" → ${wallLI(w)}" LI [${typeMap[w.cabType || "both"]}]${w.hasCT ? " ✓CT" : ""}`));
         if (r.islandLI) { const ili = r.islandSides === "both" ? parseFloat(r.islandLI) * 2 : parseFloat(r.islandLI); lines.push(`      Island: ${r.islandLI}" → ${ili}" LI${r.islandHasCT ? " ✓CT" : ""}`); }
         lines.push(`    → Total LI: ${c.totalCabLI}" × $${c.pricePerLI} = ${fmt(c.cabinetSubtotal)}  (×${qty} = ${fmt(c.cabinetSubtotal * qty)})`);
         if (c.ctSF > 0) lines.push(`    → CT: ${c.ctSF}SF (${c.ctDepth}") × $${c.ctPricePerSF} = ${fmt(c.ctSubtotal)}  (×${qty} = ${fmt(c.ctSubtotal * qty)})`);
         if (c.bsSF > 0) lines.push(`    → BS: ${c.bsSF}SF (${c.bsHeight}") × $${c.ctPricePerSF} = ${fmt(c.bsSubtotal)}  (×${qty} = ${fmt(c.bsSubtotal * qty)})`);
-        if (c.ledSubtotal > 0) lines.push(`    → LED: ${c.ledRuns} runs × $${LED_PRICE_PER_10FT} = ${fmt(c.ledSubtotal)}  (×${qty} = ${fmt(c.ledSubtotal * qty)})`);
+        if (c.ledSubtotal > 0) lines.push(`    → LED: ${c.ledRuns} runs × $${c.ledPricePerRun} = ${fmt(c.ledSubtotal)}  (×${qty} = ${fmt(c.ledSubtotal * qty)})`);
       }
       if (c.hasCustomMarkup) {
         lines.push(`    → Sub-raw: ${fmt(c.roomSubRaw)} + ${c.roomMarkupPct}% = ${fmt(c.roomRaw)}  (×${qty} = ${fmt(c.roomRaw * qty)})`);
@@ -806,7 +873,15 @@ export default function AcaciaEstimator({ injectedAnthropicKey = "" }) {
             <div style={{ fontSize: 17, fontWeight: 700, marginBottom: 3 }}>New Estimate</div>
             <div style={{ fontSize: 12, color: "#8a7a60", marginBottom: 22 }}>Project details first</div>
             <div style={S.row}><div style={S.col}><label style={S.label}>Client / Project Name</label><input style={S.input} placeholder="e.g. Smith Residence / Arki Construction" value={job.clientName || ""} onChange={e => sf("clientName", e.target.value)} /></div></div>
-            <div style={S.row}><div style={S.col}><label style={S.label}>Address</label><input style={S.input} placeholder="Full project address" value={job.address || ""} onChange={e => sf("address", e.target.value)} /></div></div>
+            <div style={S.row}><div style={S.col}><label style={S.label}>Address</label><input style={S.input} placeholder="e.g. 1900 SW 32nd Ave, Miami, FL 33145" value={job.address || ""} onChange={e => sf("address", e.target.value)} onBlur={e => {
+              // Auto-format: capitalize words, ensure City, ST ZIPCODE pattern
+              let v = e.target.value.trim();
+              // Title-case each word except state abbreviations
+              v = v.replace(/\w+/g, w => w.length === 2 && /[A-Z]{2}/.test(w.toUpperCase()) ? w.toUpperCase() : w.charAt(0).toUpperCase() + w.slice(1).toLowerCase());
+              // Ensure ZIP stays uppercase/numeric
+              v = v.replace(/(\d{5})(-\d{4})?/, m => m);
+              sf("address", v);
+            }} /></div></div>
             <div style={S.row}>
               <div style={S.col}><label style={S.label}>Job Type</label><select style={S.select} value={job.jobType} onChange={e => sf("jobType", e.target.value)}><option value="single">Single Residential Home</option><option value="multi">Multi-Unit / Developer Project</option></select></div>
               <div style={S.col}><label style={S.label}>Countertop Material</label><input style={S.input} placeholder="e.g. Crystal White Quartz, TBD" value={job.ctMaterial || ""} onChange={e => sf("ctMaterial", e.target.value)} /></div>
@@ -945,6 +1020,50 @@ export default function AcaciaEstimator({ injectedAnthropicKey = "" }) {
                 </div>
               </div>
             </div>
+
+            {/* Pre-generate renders */}
+            {allRoomsWithPhotos.length > 0 && openaiKey && (
+              <div style={S.card}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: "#1a1714", marginBottom: 4 }}>AI Renders</div>
+                <div style={{ fontSize: 11, color: "#8a7a60", marginBottom: 14 }}>Generate room renders before finalizing the estimate. These will also appear in the final output.</div>
+                <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
+                  {allRoomsWithPhotos.map(({ room, unitName }, i) => {
+                    const roomName = (unitName ? `${unitName} – ` : "") + ((room.type === "Other" ? room.customType : room.type) || "Room");
+                    const existingRender = renders.find(r => r.roomName === roomName);
+                    return (
+                      <div key={i} style={{ flex: "1 1 200px", minWidth: 180 }}>
+                        <div style={{ fontSize: 11, fontWeight: 700, color: "#6a5a40", marginBottom: 6 }}>{roomName}</div>
+                        {!existingRender && (
+                          <button style={S.btnGold} onClick={async () => {
+                            setRenders(prev => [...prev.filter(r => r.roomName !== roomName), { roomName, loading: true, url: null, error: null }]);
+                            try {
+                              const result = await generateRender(room, unitName);
+                              setRenders(prev => [...prev.filter(r => r.roomName !== roomName), { ...result, loading: false }]);
+                            } catch (e) {
+                              setRenders(prev => [...prev.filter(r => r.roomName !== roomName), { roomName, loading: false, url: null, error: e.message }]);
+                            }
+                          }}>Generate Render</button>
+                        )}
+                        {existingRender?.loading && (
+                          <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 11, color: "#8a7a60" }}>
+                            <div style={{ width: 14, height: 14, border: "2px solid #c8a84b", borderTopColor: "transparent", borderRadius: "50%", animation: "spin 0.8s linear infinite" }} />
+                            Generating…
+                          </div>
+                        )}
+                        {existingRender?.url && (
+                          <div>
+                            <img src={existingRender.url} alt={roomName} style={{ width: "100%", borderRadius: 6, border: "1px solid #e8e2d8" }} />
+                            <button style={{ ...S.btnGhost, marginTop: 6, fontSize: 10 }} onClick={() => setRenders(prev => prev.filter(r => r.roomName !== roomName))}>Regenerate</button>
+                          </div>
+                        )}
+                        {existingRender?.error && <div style={{ fontSize: 10, color: "#a04030" }}>{existingRender.error}</div>}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
             <div style={{ display: "flex", gap: 10 }}>
               <button style={S.btnGhost} onClick={() => setStep(1)}>← Back</button>
               <button style={S.btnGold} onClick={generate}>Generate Estimate ✓</button>
