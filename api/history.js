@@ -1,7 +1,7 @@
 // api/history.js
 // Manages estimate history using Vercel Blob storage
 
-import { put, list, del, head } from '@vercel/blob';
+import { put, list, del, download } from '@vercel/blob';
 
 export const config = { maxDuration: 30 };
 
@@ -46,7 +46,7 @@ export default async function handler(req, res) {
 
       const safeName = (fileName || `estimate-${Date.now()}`).replace(/[^a-zA-Z0-9_\-\s]/g, '_');
       const blob = await put(`${PREFIX}${safeName}.json`, json, {
-        access: 'public',
+        access: 'private',
         token: process.env.BLOB_READ_WRITE_TOKEN,
         contentType: 'application/json',
       });
@@ -56,10 +56,10 @@ export default async function handler(req, res) {
 
     // ── Load estimate ───────────────────────────────────────────────────────
     if (action === 'load') {
-      const { estimateId } = req.body; // estimateId is the blob URL
-      const r = await fetch(estimateId);
-      if (!r.ok) throw new Error('Failed to fetch estimate from blob storage');
-      const data = await r.json();
+      const { estimateId } = req.body;
+      const { body } = await download(estimateId, { token: process.env.BLOB_READ_WRITE_TOKEN });
+      const text = await new Response(body).text();
+      const data = JSON.parse(text);
       return res.status(200).json({ success: true, data });
     }
 
