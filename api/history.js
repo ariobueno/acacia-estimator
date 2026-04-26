@@ -1,42 +1,11 @@
 // api/history.js
-// Manages estimate history JSON files in Google Drive under "Acacia Estimates/History"
+// Manages estimate history using Vercel Blob storage
 
-import { google } from 'googleapis';
-import { Readable } from 'stream';
+import { put, list, del, head } from '@vercel/blob';
 
 export const config = { maxDuration: 30 };
 
-const FOLDER_ID = '1FjOUqJRZvgo89u_stq_uuH4N1_cIxmYp';
-
-async function getDrive() {
-  const credentials = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_JSON);
-  const auth = new google.auth.GoogleAuth({
-    credentials,
-    scopes: ['https://www.googleapis.com/auth/drive'],
-  });
-  return google.drive({ version: 'v3', auth });
-}
-
-async function getOrCreateFolder(drive, name, parentId) {
-  const q = `name='${name}' and mimeType='application/vnd.google-apps.folder' and trashed=false and '${parentId}' in parents`;
-  const res = await drive.files.list({
-    q,
-    fields: 'files(id,name)',
-    supportsAllDrives: true,
-    includeItemsFromAllDrives: true,
-  });
-  if (res.data.files.length > 0) return res.data.files[0].id;
-  const created = await drive.files.create({
-    requestBody: {
-      name,
-      mimeType: 'application/vnd.google-apps.folder',
-      parents: [parentId],
-    },
-    supportsAllDrives: true,
-    fields: 'id',
-  });
-  return created.data.id;
-}
+const PREFIX = 'estimates/';
 
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -45,70 +14,59 @@ export default async function handler(req, res) {
   if (req.method === 'OPTIONS') return res.status(200).end();
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
-  const saJson = process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
-  if (!saJson) return res.status(500).json({ error: 'GOOGLE_SERVICE_ACCOUNT_JSON not configured' });
+  if (!process.env.BLOB_READ_WRITE_TOKEN) {
+    return res.status(500).json({ error: 'BLOB_READ_WRITE_TOKEN not configured' });
+  }
 
   try {
-    const drive = await getDrive();
     const { action } = req.body;
 
-    const historyFolderId = await getOrCreateFolder(drive, 'History', FOLDER_ID);
-
-    // ── List all estimates ──────────────────────────────────────────────────
+    // ── List all saved estimates ────────────────────────────────────────────
     if (action === 'list') {
-      const files = await drive.files.list({
-        q: `'${historyFolderId}' in parents and mimeType='application/json' and trashed=false`,
-        fields: 'files(id,name,modifiedTime,createdTime)',
-        orderBy: 'modifiedTime desc',
-        pageSize: 50,
-        supportsAllDrives: true,
-        includeItemsFromAllDrives: true,
-      });
-      return res.status(200).json({ files: files.data.files || [] });
+      const { blobs } = await list({ prefix: PREFIX, token: process.env.BLOB_READ_WRITE_TOKEN });
+      const files = blobs.map(b => ({
+        id: b.url,
+        name: b.pathname.replace(PREFIX, '').replace('.json', ''),
+        modifiedTime: b.uploadedAt,
+        createdTime: b.uploadedAt,
+        size: b.size,
+      }));
+      return res.status(200).json({ files });
     }
 
-    // ── Save/update estimate ────────────────────────────────────────────────
+    // ── Save / update estimate ──────────────────────────────────────────────
     if (action === 'save') {
       const { estimateId, fileName, data } = req.body;
       const json = JSON.stringify(data);
-      const stream = Readable.from(Buffer.from(json));
 
+      // If estimateId is a blob URL, delete old version first then re-upload
       if (estimateId) {
-        await drive.files.update({
-          fileId: estimateId,
-          media: { mimeType: 'application/json', body: stream },
-          supportsAllDrives: true,
-        });
-        return res.status(200).json({ success: true, fileId: estimateId });
-      } else {
-        const file = await drive.files.create({
-          requestBody: { name: fileName, parents: [historyFolderId] },
-          media: { mimeType: 'application/json', body: stream },
-          supportsAllDrives: true,
-          fields: 'id,name',
-        });
-        return res.status(200).json({ success: true, fileId: file.data.id, fileName: file.data.name });
+        try { await del(estimateId, { token: process.env.BLOB_READ_WRITE_TOKEN }); } catch (e) { /* ok if missing */ }
       }
+
+      const safeName = (fileName || `estimate-${Date.now()}`).replace(/[^a-zA-Z0-9_\-\s]/g, '_');
+      const blob = await put(`${PREFIX}${safeName}.json`, json, {
+        access: 'public',
+        token: process.env.BLOB_READ_WRITE_TOKEN,
+        contentType: 'application/json',
+      });
+
+      return res.status(200).json({ success: true, fileId: blob.url, fileName: safeName });
     }
 
     // ── Load estimate ───────────────────────────────────────────────────────
     if (action === 'load') {
-      const { estimateId } = req.body;
-      const file = await drive.files.get({
-        fileId: estimateId,
-        alt: 'media',
-        supportsAllDrives: true,
-      });
-      return res.status(200).json({ success: true, data: file.data });
+      const { estimateId } = req.body; // estimateId is the blob URL
+      const r = await fetch(estimateId);
+      if (!r.ok) throw new Error('Failed to fetch estimate from blob storage');
+      const data = await r.json();
+      return res.status(200).json({ success: true, data });
     }
 
     // ── Delete estimate ─────────────────────────────────────────────────────
     if (action === 'delete') {
       const { estimateId } = req.body;
-      await drive.files.delete({
-        fileId: estimateId,
-        supportsAllDrives: true,
-      });
+      await del(estimateId, { token: process.env.BLOB_READ_WRITE_TOKEN });
       return res.status(200).json({ success: true });
     }
 
