@@ -47,7 +47,7 @@ export default async function handler(req, res) {
     const rootFolderId = process.env.GOOGLE_DRIVE_FOLDER_ID || '1FjOUqJRZvgo89u_stq_uuH4N1_cIxmYp';
     const historyFolderId = await getOrCreateFolder(drive, 'History', rootFolderId);
 
-    // ── List all estimates ──────────────────────────────────────────────────
+    // â”€â”€ List all estimates â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     if (action === 'list') {
       const files = await drive.files.list({
         q: `'${historyFolderId}' in parents and mimeType='application/json' and trashed=false`,
@@ -58,7 +58,7 @@ export default async function handler(req, res) {
       return res.status(200).json({ files: files.data.files || [] });
     }
 
-    // ── Save/update estimate ────────────────────────────────────────────────
+    // â”€â”€ Save/update estimate â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     if (action === 'save') {
       const { estimateId, fileName, data } = req.body;
       const json = JSON.stringify(data);
@@ -82,14 +82,14 @@ export default async function handler(req, res) {
       }
     }
 
-    // ── Load estimate ────────────────────────────────────────────────────────
+    // â”€â”€ Load estimate â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     if (action === 'load') {
       const { estimateId } = req.body;
       const file = await drive.files.get({ fileId: estimateId, alt: 'media' });
       return res.status(200).json({ success: true, data: file.data });
     }
 
-    // ── Delete estimate ──────────────────────────────────────────────────────
+    // â”€â”€ Delete estimate â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     if (action === 'delete') {
       const { estimateId } = req.body;
       await drive.files.delete({ fileId: estimateId });
