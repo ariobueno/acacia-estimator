@@ -4,9 +4,7 @@
 
 export const config = { maxDuration: 30 };
 
-const BASE_URL = process.env.VERCEL_URL
-  ? `https://${process.env.VERCEL_URL}`
-  : 'https://acacia-estimator.vercel.app';
+const BASE_URL = 'https://acacia-estimator.vercel.app';
 
 async function kommo(action, payload) {
   const res = await fetch(`${BASE_URL}/api/kommo`, {
