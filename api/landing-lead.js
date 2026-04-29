@@ -71,6 +71,9 @@ export default async function handler(req, res) {
   const nextUrl     = body._next || 'https://acacia-estimator.vercel.app';
   const source      = req.headers.referer || body._source || 'Landing Page';
 
+  // Debug mode — return JSON error instead of redirecting
+  const debug = req.query?.debug === '1';
+
   try {
     const accessToken = await getValidToken();
     const baseUrl = `https://${SUBDOMAIN}.kommo.com/api/v4`;
@@ -124,7 +127,7 @@ export default async function handler(req, res) {
     return res.redirect(302, nextUrl);
   } catch (err) {
     console.error('Landing lead error:', err);
-    // Redirect anyway — don't leave user on an error page
+    if (debug) return res.status(500).json({ error: err.message, body });
     return res.redirect(302, nextUrl);
   }
 }
