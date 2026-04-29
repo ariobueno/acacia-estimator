@@ -1,59 +1,20 @@
 // api/landing-lead.js
 // Accepts HTML form POSTs from landing pages, creates a Kommo contact + lead, redirects to thank-you
-
-import { put, list } from '@vercel/blob';
+// Delegates Kommo API calls to /api/kommo to share token management
 
 export const config = { maxDuration: 30 };
 
-const CLIENT_ID     = process.env.KOMMO_CLIENT_ID;
-const CLIENT_SECRET = process.env.KOMMO_CLIENT_SECRET;
-const SUBDOMAIN     = process.env.KOMMO_SUBDOMAIN;
-const BLOB_TOKEN    = process.env.BLOB_READ_WRITE_TOKEN;
+const BASE_URL = process.env.VERCEL_URL
+  ? `https://${process.env.VERCEL_URL}`
+  : 'https://acacia-estimator.vercel.app';
 
-async function getValidToken() {
-  const { blobs } = await list({ prefix: 'kommo/', token: BLOB_TOKEN });
-  const tokenBlob = blobs.find(b => b.pathname === 'kommo/tokens.json');
-  if (!tokenBlob) throw new Error('Kommo not connected.');
-
-  const tokenFetch = await fetch(tokenBlob.url, { headers: { authorization: `Bearer ${BLOB_TOKEN}` } });
-  if (!tokenFetch.ok) throw new Error('Could not load Kommo tokens.');
-  const tokens = await tokenFetch.json();
-
-  if (tokens.expires_at && Date.now() < tokens.expires_at - 300_000) {
-    return tokens.access_token;
-  }
-
-  const refreshRes = await fetch(`https://${SUBDOMAIN}.kommo.com/oauth2/access_token`, {
+async function kommo(action, payload) {
+  const res = await fetch(`${BASE_URL}/api/kommo`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      client_id: CLIENT_ID,
-      client_secret: CLIENT_SECRET,
-      grant_type: 'refresh_token',
-      refresh_token: tokens.refresh_token,
-      redirect_uri: process.env.KOMMO_REDIRECT_URI || 'https://acacia-estimator.vercel.app/api/kommo-auth',
-    }),
+    body: JSON.stringify({ action, ...payload }),
   });
-
-  const newTokens = await refreshRes.json();
-  if (!refreshRes.ok || newTokens.error) throw new Error('Token refresh failed.');
-
-  const updated = {
-    access_token: newTokens.access_token,
-    refresh_token: newTokens.refresh_token,
-    expires_at: Date.now() + (newTokens.expires_in * 1000),
-    token_type: newTokens.token_type,
-    saved_at: new Date().toISOString(),
-  };
-
-  await put('kommo/tokens.json', JSON.stringify(updated), {
-    access: 'private',
-    token: BLOB_TOKEN,
-    contentType: 'application/json',
-    allowOverwrite: true,
-  });
-
-  return updated.access_token;
+  return res.json();
 }
 
 export default async function handler(req, res) {
@@ -70,59 +31,28 @@ export default async function handler(req, res) {
   const details     = body.details || '';
   const nextUrl     = body._next || 'https://acacia-estimator.vercel.app';
   const source      = req.headers.referer || body._source || 'Landing Page';
-
-  // Debug mode — return JSON error instead of redirecting
-  const debug = req.query?.debug === '1';
+  const debug       = req.query?.debug === '1';
 
   try {
-    const accessToken = await getValidToken();
-    const baseUrl = `https://${SUBDOMAIN}.kommo.com/api/v4`;
-    const headers = {
-      'Authorization': `Bearer ${accessToken}`,
-      'Content-Type': 'application/json',
-    };
+    const noteLines = [
+      `🌐 Source: ${source}`,
+      projectType ? `📋 Project: ${projectType}` : '',
+      budget      ? `💰 Budget: ${budget}` : '',
+      email       ? `📧 Email: ${email}` : '',
+      details     ? `📝 Notes: ${details}` : '',
+    ].filter(Boolean).join('\n');
 
-    // Build contact fields
-    const contactFields = [];
-    if (phone) contactFields.push({ field_code: 'PHONE', values: [{ value: phone, enum_code: 'WORK' }] });
-    if (email) contactFields.push({ field_code: 'EMAIL', values: [{ value: email, enum_code: 'WORK' }] });
-
-    // Create contact
-    const contactRes = await fetch(`${baseUrl}/contacts`, {
-      method: 'POST', headers,
-      body: JSON.stringify([{ name, custom_fields_values: contactFields }]),
+    const data = await kommo('create', {
+      phone,
+      clientName: name,
+      address: projectType || 'Landing Page Lead',
+      proposalTotal: 0,
+      internalNotes: noteLines,
+      fileName: source,
     });
-    const contactData = await contactRes.text().then(t => t ? JSON.parse(t) : {});
-    const contactId = contactData?._embedded?.contacts?.[0]?.id;
 
-    // Create lead
-    const leadName = [name, projectType].filter(Boolean).join(' – ');
-    const leadRes = await fetch(`${baseUrl}/leads`, {
-      method: 'POST', headers,
-      body: JSON.stringify([{
-        name: leadName,
-        _embedded: contactId ? { contacts: [{ id: contactId }] } : {},
-      }]),
-    });
-    const leadData = await leadRes.text().then(t => t ? JSON.parse(t) : {});
-    const leadId = leadData?._embedded?.leads?.[0]?.id;
-
-    // Add note with all submitted details
-    if (leadId) {
-      const noteLines = [
-        `🌐 Source: ${source}`,
-        projectType ? `📋 Project: ${projectType}` : '',
-        budget      ? `💰 Budget: ${budget}` : '',
-        phone       ? `📞 Phone: ${phone}` : '',
-        email       ? `📧 Email: ${email}` : '',
-        details     ? `📝 Notes: ${details}` : '',
-      ].filter(Boolean).join('\n');
-
-      await fetch(`${baseUrl}/leads/${leadId}/notes`, {
-        method: 'POST', headers,
-        body: JSON.stringify([{ note_type: 'common', params: { text: noteLines } }]),
-      });
-    }
+    if (data.error) throw new Error(data.error);
+    if (debug) return res.status(200).json({ success: true, data });
 
     return res.redirect(302, nextUrl);
   } catch (err) {
